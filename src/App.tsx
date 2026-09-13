@@ -833,7 +833,8 @@ export default function App() {
             videoId={slot1Song.youtubeId}
             opts={{ 
               height: '0', 
-              width: '0', 
+              width: '0',
+              host: 'https://www.youtube.com',
               playerVars: { 
                 autoplay: 1, 
                 controls: 0, 
@@ -852,7 +853,8 @@ export default function App() {
             videoId={slot2Song.youtubeId}
             opts={{ 
               height: '0', 
-              width: '0', 
+              width: '0',
+              host: 'https://www.youtube.com',
               playerVars: { 
                 autoplay: 1, 
                 controls: 0, 
@@ -975,15 +977,21 @@ export default function App() {
               </button>
             </div>
             
-            {/* Queue Panel Overlay (Rendered outside the flex row so it can be absolute relative to the player fixed container) */}
+            {/* Queue Panel Overlay (Drawer on Mobile, Popover on Desktop) */}
             {isQueueOpen && (
-              <div className="absolute bottom-[calc(100%+0.5rem)] right-4 md:right-6 w-[calc(100%-2rem)] md:w-96 max-h-[50vh] md:max-h-[400px] bg-neutral-50 dark:bg-neutral-900 flex flex-col neo-modal border-2 border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 animate-in slide-in-from-bottom-2 fade-in duration-200 rounded-2xl md:rounded-3xl">
-                <div className="p-4 border-b-2 border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
-                  <h3 className="font-mono font-bold text-sm uppercase tracking-wider">Playing Next</h3>
-                  <button onClick={() => setIsQueueOpen(false)} className="text-neutral-500 hover:text-pink-500 dark:hover:text-pink-300 transition-colors">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
+              <>
+                {/* Mobile Backdrop */}
+                <div 
+                  className="fixed inset-0 bg-black/40 z-[90] md:hidden animate-in fade-in duration-200"
+                  onClick={() => setIsQueueOpen(false)}
+                />
+                <div className="fixed md:absolute inset-y-0 right-0 md:inset-y-auto md:bottom-[calc(100%+0.5rem)] md:right-4 lg:right-6 w-[85vw] max-w-[360px] md:w-96 h-full md:h-auto max-h-full md:max-h-[400px] bg-neutral-50 dark:bg-neutral-900 flex flex-col neo-modal border-l-2 md:border-2 border-neutral-200 dark:border-neutral-800 shadow-2xl z-[100] md:z-50 animate-in slide-in-from-right-16 md:slide-in-from-right-0 md:slide-in-from-bottom-2 fade-in duration-300 md:duration-200 rounded-l-2xl md:rounded-3xl">
+                  <div className="p-4 md:p-4 pt-10 md:pt-4 border-b-2 border-neutral-200 dark:border-neutral-800 flex items-center justify-between shrink-0">
+                    <h3 className="font-mono font-bold text-sm uppercase tracking-wider">Playing Next</h3>
+                    <button onClick={() => setIsQueueOpen(false)} className="p-1 -mr-1 text-neutral-500 hover:text-pink-500 dark:hover:text-pink-300 transition-colors">
+                      <X className="w-6 h-6 md:w-5 md:h-5" />
+                    </button>
+                  </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
                   {queue.length === 0 ? (
                     <div className="p-8 text-center text-sm text-neutral-500 font-mono">Queue is empty</div>
@@ -1015,6 +1023,7 @@ export default function App() {
                   )}
                 </div>
               </div>
+              </>
             )}
             
           </div>
