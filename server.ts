@@ -15,7 +15,7 @@ const ytmusic = new YTMusic();
 async function startServer() {
   await ytmusic.initialize();
   const app = express();
-  const port = process.env.PORT || 3000;
+  const port = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -45,7 +45,11 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        watch: null,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

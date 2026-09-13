@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Play, Pause, Heart, Music, Loader2, X, LogIn, LogOut, SkipBack, SkipForward, Shuffle, Clock, ChevronDown, PanelLeftClose, PanelLeftOpen, Repeat, Repeat1, ListMusic } from 'lucide-react';
 import { db, auth } from './firebase';
-import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, getDocs, setDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from './firebaseUtils';
 import { FavoriteSong, SongResult } from './types';
@@ -30,6 +30,8 @@ const searchYouTube = async (query: string): Promise<SongResult[]> => {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SongResult[]>([]);
   const [favorites, setFavorites] = useState<FavoriteSong[]>([]);
@@ -330,54 +332,77 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribeSnapshot: (() => void) | null = null;
+    let isMounted = true;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (!isMounted) return;
       setUser(currentUser);
-      
-      // Clear previous snapshot listener if exists
+      setIsAuthLoading(false);
+      setAuthError(null);
+
       if (unsubscribeSnapshot) {
         unsubscribeSnapshot();
         unsubscribeSnapshot = null;
       }
 
-      if (currentUser) {
-        try {
-          const q = query(collection(db, `users/${currentUser.uid}/favorites`));
-          unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-            const favs: FavoriteSong[] = [];
-            snapshot.forEach((docSnap) => {
-              favs.push({ ...docSnap.data(), id: docSnap.id } as any);
-            });
-            setFavorites(favs.sort((a, b) => b.createdAt - a.createdAt));
-          }, (error) => {
-            handleFirestoreError(error, OperationType.LIST, `users/${currentUser.uid}/favorites`);
-          });
-        } catch (err) {
-          console.error(err);
-        }
-      } else {
+      if (!currentUser) {
         setFavorites([]);
+        return;
+      }
+
+      const favoritesPath = `users/${currentUser.uid}/favorites`;
+      const favoritesQuery = query(collection(db, favoritesPath));
+      unsubscribeSnapshot = onSnapshot(favoritesQuery, (snapshot) => {
+        const favs: FavoriteSong[] = snapshot.docs.map((docSnap) => ({
+          ...docSnap.data(),
+          id: docSnap.id,
+        } as unknown as FavoriteSong));
+        setFavorites(favs.sort((a, b) => b.createdAt - a.createdAt));
+      }, (error) => {
+        console.error('Favorites listener failed', error);
+        setAuthError('Your account is signed in, but favorites could not be loaded.');
+        handleFirestoreError(error, OperationType.LIST, favoritesPath);
+      });
+    }, (error) => {
+      console.error('Firebase auth state failed', error);
+      if (isMounted) {
+        setIsAuthLoading(false);
+        setAuthError('Unable to connect to Google sign-in. Check your Firebase configuration and try again.');
+      }
+    });
+
+    getRedirectResult(auth).catch((error: any) => {
+      if (error?.code !== 'auth/no-auth-event') {
+        console.error('Redirect sign-in failed', error);
+        if (isMounted) setAuthError('Google sign-in could not be completed. Please try again.');
       }
     });
 
     return () => {
+      isMounted = false;
       unsubscribeAuth();
       if (unsubscribeSnapshot) unsubscribeSnapshot();
     };
   }, []);
 
   const login = async () => {
+    setAuthError(null);
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
     try {
       await signInWithPopup(auth, provider);
     } catch (error: any) {
-      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
-        // User intentionally closed the popup, silently ignore
-        console.log("Login popup closed by user.");
-      } else {
-        console.error("Login failed", error);
-        // We avoid alert() due to iframe constraints, just logging is fine.
+      const code = error?.code;
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+        await signInWithRedirect(auth, provider);
+        return;
       }
+      console.error('Login failed', error);
+      setAuthError(code === 'auth/unauthorized-domain'
+        ? 'This preview domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.'
+        : 'Google sign-in failed. Please try again.');
     }
   };
 
@@ -514,16 +539,26 @@ export default function App() {
               )}
             </div>
           ) : (
-            <button onClick={login} className={cn("flex items-center justify-center gap-2 bg-white text-pink-500 py-2.5 rounded-xl text-sm font-medium hover:bg-neutral-200 transition-colors w-full", isSidebarCollapsed ? "px-0" : "px-4")} title="Sign In">
-              <LogIn className="w-4 h-4 shrink-0" />
-              {!isSidebarCollapsed && <span>Sign In</span>}
+            <button onClick={login} disabled={isAuthLoading} className={cn("flex items-center justify-center gap-2 bg-white text-pink-500 py-2.5 rounded-xl text-sm font-medium hover:bg-neutral-200 transition-colors w-full disabled:cursor-wait disabled:opacity-60", isSidebarCollapsed ? "px-0" : "px-4")} title="Sign In">
+              {isAuthLoading ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <LogIn className="w-4 h-4 shrink-0" />}
+              {!isSidebarCollapsed && <span>{isAuthLoading ? 'Checking session…' : 'Sign In'}</span>}
             </button>
           )}
         </div>
       </aside>
 
-      {/* Main Content Area */}
+        {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto pb-40 md:pb-32 relative flex flex-col">
+        {authError && (
+          <div role="alert" className="mx-4 mt-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-300">
+            <div className="flex items-start justify-between gap-3">
+              <span>{authError}</span>
+              <button type="button" onClick={() => setAuthError(null)} className="shrink-0" aria-label="Dismiss authentication error">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
         
         {/* Mobile Header (Hidden on Desktop) */}
         <div className="md:hidden flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/80 backdrop-blur-xl sticky top-0 z-10">
@@ -989,11 +1024,12 @@ function SongCard({
   onPlay, 
   onFavorite 
 }: { 
+  key?: string;
   song: SongResult; 
   isPlaying: boolean; 
   isFavorite: boolean; 
   onPlay: () => void; 
-  onFavorite: () => void; 
+  onFavorite: () => void | Promise<void>; 
 }) {
   return (
     <div onClick={onPlay} className="neo-card cursor-pointer group bg-neutral-100/50 dark:bg-neutral-800/30 hover:bg-neutral-200 dark:hover:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:border-neutral-700 rounded-2xl p-4 transition-all duration-300 hover:-rotate-1 hover:scale-[1.02] flex items-center gap-4">
