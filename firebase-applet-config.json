@@ -1,12 +1,12 @@
 {
   "projectId": "music-player-08",
-  "appId": "1:853881628601:web:5e8caf837d6bc149efb868",
+  "appId": "1:853881628601:web:64ec7333e3ec86ccefb868",
   "apiKey": "AIzaSyAmv1KocQGuKf-_Y0FaJ3bJ8MJnnJg17k4",
   "authDomain": "music-player-08.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-grooveai-71fbdc71-847c-44c5-8fc7-2c78ee87cfb9",
   "storageBucket": "music-player-08.firebasestorage.app",
   "messagingSenderId": "853881628601",
-  "measurementId": "G-W5WC9TVE0M",
+  "measurementId": "G-6NCX271HJB",
   "oAuthClientId": "853881628601-7te95gvq82j8dvhs8lk5qq4bq26vrhsb.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

@@ -831,7 +831,17 @@ export default function App() {
         {slot1Song && slot1Song.youtubeId && (
           <YouTube
             videoId={slot1Song.youtubeId}
-            opts={{ height: '0', width: '0', playerVars: { autoplay: 1, controls: 0, disablekb: 1 } }}
+            opts={{ 
+              height: '0', 
+              width: '0', 
+              playerVars: { 
+                autoplay: 1, 
+                controls: 0, 
+                disablekb: 1,
+                origin: typeof window !== 'undefined' ? window.location.origin : '',
+                enablejsapi: 1
+              } 
+            }}
             onReady={onPlayerReady(1)}
             onStateChange={onPlayerStateChange(1)}
             onError={(e) => console.error("YouTube Error 1:", e)}
@@ -840,7 +850,17 @@ export default function App() {
         {slot2Song && slot2Song.youtubeId && (
           <YouTube
             videoId={slot2Song.youtubeId}
-            opts={{ height: '0', width: '0', playerVars: { autoplay: 1, controls: 0, disablekb: 1 } }}
+            opts={{ 
+              height: '0', 
+              width: '0', 
+              playerVars: { 
+                autoplay: 1, 
+                controls: 0, 
+                disablekb: 1,
+                origin: typeof window !== 'undefined' ? window.location.origin : '',
+                enablejsapi: 1
+              } 
+            }}
             onReady={onPlayerReady(2)}
             onStateChange={onPlayerStateChange(2)}
             onError={(e) => console.error("YouTube Error 2:", e)}
