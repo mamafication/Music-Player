@@ -1,5 +1,4 @@
 @import "tailwindcss";
-
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer utilities {
@@ -10,130 +9,23 @@
     background: transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #3f3f46;
+    background: #d4d4d8;
     border-radius: 10px;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #52525b;
+    background: #a1a1aa;
   }
 }
-
-@layer components {
-  /* Brutalist Theme Overrides */
-  .brutal {
-    --brutal-bg: #fef08a;          /* yellow-200 */
-    --brutal-sidebar: #f9a8d4;     /* pink-300 */
-    --brutal-player: #7dd3fc;      /* sky-300 */
-    --brutal-card: #bef264;        /* lime-300 */
-    --brutal-card-hover: #86efac;  /* green-300 */
-    --brutal-nav-btn: #fbcfe8;     /* pink-200 */
-    --brutal-nav-btn-h: #f472b6;   /* pink-400 */
-    --brutal-search: #fff;         /* white */
-    --brutal-play-btn: #fb923c;    /* orange-400 */
-    --brutal-play-btn-h: #f97316;  /* orange-500 */
-    --brutal-accent: #f87171;      /* red-400 */
-    --brutal-modal: #c084fc;       /* purple-400 */
-    --brutal-border: #000000;      /* black */
-  }
-
-  .brutal body, .brutal main {
-    background-color: var(--brutal-bg) !important;
-    color: var(--brutal-border) !important;
-    
-  }
-
-  .brutal aside {
-    background-color: var(--brutal-sidebar) !important;
-    border-right: 4px solid var(--brutal-border) !important;
-  }
-
-  .brutal .fixed.bottom-0 {
-    background-color: var(--brutal-player) !important;
-    border-top: 4px solid var(--brutal-border) !important;
-    box-shadow: 0 -8px 0 0 var(--brutal-border) !important;
-  }
-
-  /* Text Overrides */
-  .brutal * {
-    color: var(--brutal-border);
-  }
-  
-  .brutal h1, .brutal h2, .brutal h3 {
-    font-family: system-ui, -apple-system, sans-serif !important;
-    font-stretch: condensed !important;
-  }
-
-  .brutal h1, .brutal h2, .brutal h3, .brutal p {
-    font-weight: 900 !important;
-    letter-spacing: -0.05em !important;
-  }
-
-  /* Remove all soft radii */
-  .brutal .rounded-full, .brutal .rounded-2xl, .brutal .rounded-xl, .brutal .rounded-lg, .brutal .rounded-3xl, .brutal img {
-    border-radius: 0 !important;
-  }
-
-  /* Thick borders and hard shadows on primary interactive blocks */
-
-  .brutal input[type="text"], 
-  .brutal aside nav button, 
-  .brutal .neo-card,
-  .brutal .fixed.bottom-0 button.bg-white,
-  .brutal .neo-modal {
-    background-color: var(--brutal-card) !important;
-    border: 3px solid var(--brutal-border) !important;
-    box-shadow: 4px 4px 0 0 var(--brutal-border) !important;
-    transition: transform 0.1s, box-shadow 0.1s !important;
-  }
-
-  .brutal input[type="text"] {
-    background-color: var(--brutal-search) !important;
-  }
-  
-  .brutal aside nav button, .brutal .px-4.pb-4 button {
-    background-color: var(--brutal-nav-btn) !important;
-  }
-  .brutal aside nav button:hover, .brutal aside nav button.active, .brutal .px-4.pb-4 button:hover, .brutal .px-4.pb-4 button.active {
-    background-color: var(--brutal-nav-btn-h) !important;
-  }
-  
-  .brutal .fixed.bottom-0 button.bg-white {
-    background-color: var(--brutal-play-btn) !important;
-  }
-  .brutal .fixed.bottom-0 button.bg-white:hover {
-    background-color: var(--brutal-play-btn-h) !important;
-  }
-  
-  .brutal .neo-modal {
-    background-color: var(--brutal-modal) !important;
-  }
-
-  
-  /* Interaction states */
-
-  .brutal input[type="text"]:focus, 
-  .brutal aside nav button:active, \n  .brutal aside nav button.active, 
-  .brutal .neo-card:active,
-  .brutal .fixed.bottom-0 button.bg-white:active {
-    transform: translate(2px, 2px) !important;
-    box-shadow: 2px 2px 0 0 var(--brutal-border) !important;
-  }
-
-  .brutal aside nav button:hover, 
-  .brutal aside nav button.active, 
-  .brutal .neo-card:hover {
-    background-color: var(--brutal-card-hover) !important;
-  }
-  
-  /* Special Accents */
-  .brutal .bg-indigo-500 {
-    background-color: var(--brutal-accent) !important;
-    border: 3px solid var(--brutal-border) !important;
-    box-shadow: 3px 3px 0 0 var(--brutal-border) !important;
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #52525b;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+@layer base {
+  *, ::before, ::after {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 300ms;
   }
 }
-
-  .brutal .md\\:hidden.sticky.top-0 {
-    background-color: var(--brutal-sidebar) !important;
-    border-bottom: 4px solid var(--brutal-border) !important;
-  }
