@@ -14,14 +14,28 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 }
 
 const searchYouTube = async (query: string): Promise<SongResult[]> => {
+  const cleanQuery = query?.trim();
+  if (!cleanQuery) return [];
+
   try {
     const response = await fetch('/api/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query: cleanQuery })
     });
-    const data = await response.json();
-    return data.results || [];
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.results || [];
+    }
+
+    const getResponse = await fetch(`/api/search?q=${encodeURIComponent(cleanQuery)}`);
+    if (getResponse.ok) {
+      const data = await getResponse.json();
+      return data.results || [];
+    }
+
+    return [];
   } catch (error) {
     console.error('Error fetching from YouTube:', error);
     return [];

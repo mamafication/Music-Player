@@ -1,32 +1,57 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import YTMusic from 'ytmusic-api';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const ytmusic = new YTMusic();
+let isInitialized = false;
+
+async function ensureYTMusicInitialized() {
+  if (!isInitialized) {
+    try {
+      await ytmusic.initialize();
+      isInitialized = true;
+    } catch (err) {
+      console.error('Failed to initialize YTMusic:', err);
+    }
+  }
+}
 
 async function startServer() {
-  await ytmusic.initialize();
+  await ensureYTMusicInitialized();
   const app = express();
   const port = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
-  app.post('/api/search', async (req, res) => {
+  // CORS and pre-flight handling
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok' });
+  });
+
+  // Support both GET and POST for song search
+  app.all('/api/search', async (req, res) => {
     try {
-      const { query } = req.body;
-      if (!query) {
+      await ensureYTMusicInitialized();
+      const query = (req.body?.query || req.query?.query || req.query?.q || '') as string;
+      if (!query || !query.trim()) {
         return res.status(400).json({ error: 'Search query is required' });
       }
 
-      const searchResults = await ytmusic.searchSongs(query);
+      const searchResults = await ytmusic.searchSongs(query.trim());
       const videos = searchResults.slice(0, 20).map((v: any) => ({
         trackId: v.videoId,
         trackName: v.name,
@@ -54,10 +79,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // For when built
-    app.use(express.static(path.join(__dirname, '../dist')));
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, '../dist/index.html'));
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
@@ -67,3 +92,4 @@ async function startServer() {
 }
 
 startServer();
+

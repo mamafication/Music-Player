@@ -1,4 +1,5 @@
 export interface FavoriteSong {
+  id?: string;
   userId: string;
   songId: string;
   title: string;
