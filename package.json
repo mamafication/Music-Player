@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch server.ts",
+    "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --platform=node --format=esm --packages=external --outfile=dist-server/server.js",
     "start": "NODE_ENV=production node dist-server/server.js",
     "preview": "vite preview",

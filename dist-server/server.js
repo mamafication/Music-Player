@@ -39,6 +39,15 @@ async function startServer() {
       res.type("html").send(fs.readFileSync(path.join(__dirname, "index.html"), "utf8"));
     });
     const vite = await createViteServer({
+      plugins: [{
+        name: "disable-preview-hmr-client",
+        transformIndexHtml: {
+          order: "post",
+          handler(html) {
+            return html.replace(/\s*<script type="module" src="\/@vite\/client"><\/script>/, "");
+          }
+        }
+      }],
       server: {
         middlewareMode: true,
         hmr: false,
