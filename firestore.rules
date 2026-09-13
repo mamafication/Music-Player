@@ -1,0 +1,61 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Validation for FavoriteSong
+    function isValidFavoriteSong(data, userId) {
+      return data.keys().hasAll(['userId', 'songId', 'title', 'artist', 'createdAt']) &&
+             data.keys().size() <= 8 &&
+             data.userId == userId &&
+             data.songId is string && data.songId.size() > 0 && data.songId.size() <= 256 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 512 &&
+             data.artist is string && data.artist.size() > 0 && data.artist.size() <= 512 &&
+             data.createdAt is number &&
+             (!('albumArtUrl' in data) || (data.albumArtUrl is string && data.albumArtUrl.size() <= 1024)) &&
+             (!('youtubeId' in data) || (data.youtubeId is string && data.youtubeId.size() <= 1024)) &&
+             (!('previewUrl' in data) || (data.previewUrl is string && data.previewUrl.size() <= 1024));
+    }
+
+    // Users and their favorites
+    match /users/{userId} {
+      match /favorites/{favoriteId} {
+        allow read, list: if isOwner(userId);
+        
+        allow create: if isOwner(userId) &&
+                         isValidId(favoriteId) &&
+                         isValidFavoriteSong(incoming(), userId);
+                         
+        allow delete: if isOwner(userId);
+        
+        // Songs don't need to be updated, just created or deleted.
+        allow update: if false; 
+      }
+    }
+  }
+}

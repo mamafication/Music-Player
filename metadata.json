@@ -1,0 +1,8 @@
+{
+  "name": "Music Player",
+  "description": "An AI-powered music player with personalized song suggestions, Spotify playlist integration, and a database to save your favorite tracks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

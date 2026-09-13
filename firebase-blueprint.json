@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "FavoriteSong": {
+      "title": "Favorite Song",
+      "description": "A song saved by a user to their favorites.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The Firebase Auth UID of the user who saved the song.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "songId": {
+          "type": "string",
+          "description": "The unique identifier of the song (e.g. from iTunes).",
+          "maxLength": 256
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the song.",
+          "maxLength": 512
+        },
+        "artist": {
+          "type": "string",
+          "description": "The artist of the song.",
+          "maxLength": 512
+        },
+        "albumArtUrl": {
+          "type": "string",
+          "description": "URL to the album art.",
+          "maxLength": 1024
+        },
+        "previewUrl": {
+          "type": "string",
+          "description": "URL to the audio preview.",
+          "maxLength": 1024
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp when the song was favorited."
+        }
+      },
+      "required": ["userId", "songId", "title", "artist"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/favorites/{favoriteId}": {
+      "schema": {
+        "$ref": "#/entities/FavoriteSong"
+      },
+      "description": "A user's favorite songs. Using a nested subcollection to enforce strict isolation."
+    }
+  }
+}
