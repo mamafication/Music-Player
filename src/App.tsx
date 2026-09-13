@@ -223,8 +223,6 @@ export default function App() {
       interval = setInterval(async () => {
         try {
           if (typeof ytPlayer.getCurrentTime === 'function') {
-            const iframe = ytPlayer.getIframe ? ytPlayer.getIframe() : null;
-            if (!iframe || !iframe.src) return;
             const time = await ytPlayer.getCurrentTime();
             const dur = await ytPlayer.getDuration();
             if (time !== undefined) setProgress(time);
@@ -326,10 +324,7 @@ export default function App() {
       if (!ytPlayer) return;
       
       const isPlayable = (p: any) => {
-         if (!p || typeof p.playVideo !== 'function') return false;
-         const iframe = p.getIframe ? p.getIframe() : null;
-         if (iframe && !iframe.src) return false;
-         return true;
+         return p && typeof p.playVideo === 'function';
       };
 
       if (!isPlayable(ytPlayer)) return;
@@ -348,14 +343,8 @@ export default function App() {
     try {
       const time = parseFloat(e.target.value);
       if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
-        const iframe = ytPlayer.getIframe ? ytPlayer.getIframe() : null;
-        if (iframe && iframe.src) {
-          ytPlayer.seekTo(time, true);
-          setProgress(time);
-        } else if (!ytPlayer.getIframe) {
-          ytPlayer.seekTo(time, true);
-          setProgress(time);
-        }
+        ytPlayer.seekTo(time, true);
+        setProgress(time);
       }
     } catch (err) {
       // Silently ignore seek errors if iframe is not ready
