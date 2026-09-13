@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
@@ -34,6 +35,9 @@ async function startServer() {
     }
   });
   if (process.env.NODE_ENV !== "production") {
+    app.get("/", (_req, res) => {
+      res.type("html").send(fs.readFileSync(path.join(__dirname, "index.html"), "utf8"));
+    });
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
