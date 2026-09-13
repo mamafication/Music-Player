@@ -13,26 +13,51 @@ function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
 }
 
+const safeParseJson = async (res: Response) => {
+  try {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) return null;
+    const text = await res.text();
+    if (!text || !text.trim()) return null;
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
 const searchYouTube = async (query: string): Promise<SongResult[]> => {
   const cleanQuery = query?.trim();
   if (!cleanQuery) return [];
 
   try {
-    const response = await fetch('/api/search', {
+    // 1. Try POST /api/search
+    const postRes = await fetch('/api/search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       body: JSON.stringify({ query: cleanQuery })
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      return data.results || [];
+    if (postRes.ok) {
+      const data = await safeParseJson(postRes);
+      if (data?.results && Array.isArray(data.results)) {
+        return data.results;
+      }
     }
 
-    const getResponse = await fetch(`/api/search?q=${encodeURIComponent(cleanQuery)}`);
-    if (getResponse.ok) {
-      const data = await getResponse.json();
-      return data.results || [];
+    // 2. Fallback to GET /api/search?q=... (handles servers/proxies that return 405 Method Not Allowed for POST)
+    const getRes = await fetch(`/api/search?q=${encodeURIComponent(cleanQuery)}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (getRes.ok) {
+      const data = await safeParseJson(getRes);
+      if (data?.results && Array.isArray(data.results)) {
+        return data.results;
+      }
     }
 
     return [];
