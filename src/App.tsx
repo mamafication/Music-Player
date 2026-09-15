@@ -592,7 +592,7 @@ export default function App() {
           <button 
             onClick={() => {
               setActiveTab('search');
-              setTimeout(() => searchInputRef.current?.focus(), 100);
+              searchInputRef.current?.focus();
             }}
             className={cn("w-full flex items-center px-4 py-3 rounded-xl transition-colors font-medium text-sm", activeTab === 'search' ? "active bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white" : "text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50", isSidebarCollapsed ? "justify-center px-0" : "gap-3")}
             title="Search"
@@ -663,7 +663,7 @@ export default function App() {
              <button 
                onClick={() => {
                  setActiveTab('search');
-                 setTimeout(() => searchInputRef.current?.focus(), 100);
+                 searchInputRef.current?.focus();
                }} 
                className={cn("p-2 rounded-lg", activeTab === 'search' ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white" : "text-neutral-600 dark:text-neutral-400")}
              >
@@ -685,8 +685,7 @@ export default function App() {
         </div>
 
         <div className="max-w-5xl mx-auto w-full px-4 md:px-6 py-6 md:py-8">
-          {activeTab === 'search' ? (
-            <div className="space-y-8">
+          <div className={cn("space-y-8", activeTab === 'search' ? "block" : "hidden")}>
               <div className="relative group max-w-2xl z-20 mx-auto">
                 <form onSubmit={handleSearch}>
                   <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-neutral-600 dark:text-neutral-400 group-focus-within:text-pink-500 dark:group-focus-within:text-pink-300 transition-colors">
@@ -813,8 +812,7 @@ export default function App() {
                 )}
               </section>
             </div>
-          ) : (
-            <div className="space-y-8">
+          <div className={cn("space-y-8", activeTab === 'favorites' ? "block" : "hidden")}>
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-semibold flex items-center gap-2">
                   <Heart className="w-6 h-6 text-rose-500 fill-rose-500" />
@@ -887,7 +885,6 @@ export default function App() {
                 </div>
               )}
             </div>
-          )}
         </div>
       </main>
 
@@ -1280,4 +1277,3 @@ function SongCard({
     </div>
   );
 }
-
