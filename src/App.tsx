@@ -686,8 +686,9 @@ export default function App() {
 
         <div className="max-w-5xl mx-auto w-full px-4 md:px-6 py-6 md:py-8">
           <div className={cn("space-y-8", activeTab === 'search' ? "block" : "hidden")}>
-              <div className="relative group max-w-2xl z-20 mx-auto">
-                <form onSubmit={handleSearch}>
+              <div className="sticky top-[65px] md:top-0 z-30 pt-2 md:pt-4 pb-4 md:pb-6 -mt-2 md:-mt-4 bg-neutral-50/95 dark:bg-neutral-900/95 backdrop-blur-xl mx-[-16px] md:mx-[-24px] px-4 md:px-6">
+                <div className="relative group max-w-2xl mx-auto">
+                  <form onSubmit={handleSearch}>
                   <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-neutral-600 dark:text-neutral-400 group-focus-within:text-pink-500 dark:group-focus-within:text-pink-300 transition-colors">
                     <Search className="w-5 h-5" />
                   </div>
@@ -760,6 +761,7 @@ export default function App() {
                   </div>
                 )}
               </div>
+              </div>
 
               <section>
                 <div className="flex items-center justify-between mb-6">
@@ -813,6 +815,7 @@ export default function App() {
               </section>
             </div>
           <div className={cn("space-y-8", activeTab === 'favorites' ? "block" : "hidden")}>
+              <div className="sticky top-[65px] md:top-0 z-30 pt-2 md:pt-4 pb-4 md:pb-6 -mt-2 md:-mt-4 bg-neutral-50/95 dark:bg-neutral-900/95 backdrop-blur-xl mx-[-16px] md:mx-[-24px] px-4 md:px-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-semibold flex items-center gap-2">
                   <Heart className="w-6 h-6 text-rose-500 fill-rose-500" />
@@ -832,6 +835,7 @@ export default function App() {
                     <ChevronDown className="w-4 h-4 text-neutral-500 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
                 )}
+              </div>
               </div>
               
               {!user ? (
