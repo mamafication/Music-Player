@@ -1,1140 +1,560 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, Play, Pause, Heart, Music, Loader2, X, LogIn, LogOut, SkipBack, SkipForward, Shuffle, Clock, ChevronDown, PanelLeftClose, PanelLeftOpen, Repeat, Repeat1, ListMusic } from 'lucide-react';
-import { db, auth } from './firebase';
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, getDocs, setDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
-import { handleFirestoreError, OperationType } from './firebaseUtils';
-import { FavoriteSong, SongResult } from './types';
-import clsx from 'clsx';
-import { twMerge } from 'tailwind-merge';
-import YouTube, { YouTubePlayer } from 'react-youtube';
-
-function cn(...inputs: (string | undefined | null | false)[]) {
-  return twMerge(clsx(inputs));
-}
-
-const safeParseJson = async (res: Response) => {
-  try {
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) return null;
-    const text = await res.text();
-    if (!text || !text.trim()) return null;
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-};
-
-const searchYouTube = async (query: string): Promise<SongResult[]> => {
-  const cleanQuery = query?.trim();
-  if (!cleanQuery) return [];
-
-  try {
-    // 1. Try POST /api/search
-    const postRes = await fetch('/api/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({ query: cleanQuery })
-    });
-
-    if (postRes.ok) {
-      const data = await safeParseJson(postRes);
-      if (data?.results && Array.isArray(data.results)) {
-        return data.results;
-      }
-    }
-
-    // 2. Fallback to GET /api/search?q=... (handles servers/proxies that return 405 Method Not Allowed for POST)
-    const getRes = await fetch(`/api/search?q=${encodeURIComponent(cleanQuery)}`, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' }
-    });
-
-    if (getRes.ok) {
-      const data = await safeParseJson(getRes);
-      if (data?.results && Array.isArray(data.results)) {
-        return data.results;
-      }
-    }
-
-    return [];
-  } catch (error) {
-    console.error('Error fetching from YouTube:', error);
-    return [];
-  }
-};
+import { useEffect, useState } from 'react';
+import { Search, MapPin, Wind, Droplets, Thermometer, Cloud, LocateFixed, AlertTriangle, Sunrise, Sunset, Sun, Moon, Info, X } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
+import { WeatherData, LocationData, AlertData } from './types';
+import { getWeatherIcon, getWeatherDescription } from './lib/utils';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SongResult[]>([]);
-  const [favorites, setFavorites] = useState<FavoriteSong[]>([]);
-  const [activeTab, setActiveTab] = useState<'search' | 'favorites'>('search');
-  
-  const [searchSort, setSearchSort] = useState<'default' | 'title' | 'artist'>('default');
-  const [favSort, setFavSort] = useState<'date' | 'title' | 'artist'>(() => {
-    try {
-      const saved = localStorage.getItem('groove_fav_sort');
-      return (saved as 'date' | 'title' | 'artist') || 'date';
-    } catch { return 'date'; }
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('weather_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+      if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
+    }
+    return 'dark';
   });
 
-  const handleFavSortChange = (newSort: 'date' | 'title' | 'artist') => {
-    setFavSort(newSort);
-    localStorage.setItem('groove_fav_sort', newSort);
+  const isDark = theme === 'dark';
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('weather_theme', theme);
+      if (isDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  }, [theme, isDark]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
-  const [isLooping, setIsLooping] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('groove_recent_searches');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
+
+  const [location, setLocation] = useState<LocationData>({
+    name: 'Kanpur',
+    lat: 26.4499,
+    lon: 80.3319,
+    country: 'India',
+    admin1: 'Uttar Pradesh'
   });
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<LocationData[]>([]);
+  
+  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationNotice, setLocationNotice] = useState<{ type: 'info' | 'warning'; message: string } | null>(null);
+
+  const reverseGeocode = async (lat: number, lon: number) => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+      if (res.ok) {
+        const data = await res.json();
+        const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || data.address?.municipality || 'Current Location';
+        const state = data.address?.state || '';
+        const country = data.address?.country || '';
+        return { name: city, admin1: state, country };
+      }
+    } catch {
+      // Fallback
+    }
+
+    try {
+      const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          name: data.locality || data.city || 'Current Location',
+          admin1: data.principalSubdivision || '',
+          country: data.countryName || ''
+        };
+      }
+    } catch {
+      // Fallback
+    }
+
+    return { name: 'Current Location', admin1: '', country: '' };
+  };
+
+  const handleGetLocation = async () => {
+    setIsLocating(true);
+    setLocationNotice(null);
+
+    const tryIpFallback = async (reason?: string) => {
+      try {
+        const ipRes = await fetch('/api/ip-location');
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          if (ipData.lat && ipData.lon) {
+            setLocation({
+              name: ipData.name || 'Current Location',
+              lat: ipData.lat,
+              lon: ipData.lon,
+              country: ipData.country || '',
+              admin1: ipData.admin1 || ''
+            });
+            setLocationNotice({
+              type: 'info',
+              message: 'Approximate location detected via network.'
+            });
+            return true;
+          }
+        }
+      } catch {
+        // Fall through
+      }
+
+      setLocationNotice({
+        type: 'warning',
+        message: reason || 'Unable to access device location. Please search for your city above.'
+      });
+      return false;
+    };
+
+    if (!('geolocation' in navigator)) {
+      await tryIpFallback('Geolocation is not supported by your browser.');
+      setIsLocating(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          const geo = await reverseGeocode(latitude, longitude);
+          setLocation({
+            name: geo.name,
+            lat: latitude,
+            lon: longitude,
+            country: geo.country,
+            admin1: geo.admin1
+          });
+        } catch {
+          setLocation({
+            name: 'Current Location',
+            lat: latitude,
+            lon: longitude,
+          });
+        } finally {
+          setIsLocating(false);
+          setSearchQuery('');
+          setSearchResults([]);
+        }
+      },
+      async (error) => {
+        // Safe logging of geolocation status code
+        const errMessage = error?.message || (error?.code === 1 ? 'Permission denied' : error?.code === 2 ? 'Position unavailable' : 'Timed out');
+        console.warn('Browser geolocation notice:', errMessage);
+        
+        // Attempt automatic IP location fallback seamlessly
+        await tryIpFallback();
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+    );
+  };
+
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [alerts, setAlerts] = useState<AlertData[]>([]);
 
   useEffect(() => {
-    document.documentElement.classList.remove('dark');
-    document.documentElement.classList.add('brutal');
-  }, []);
+    const fetchAlerts = async () => {
+      try {
+        const res = await fetch(`/api/alerts?lat=${location.lat}&lon=${location.lon}`);
+        
+        const contentType = res.headers.get("content-type");
+        if (!res.ok || !contentType?.includes("application/json")) {
+          const errorText = await res.text();
+          throw new Error(`Invalid response (${res.status}): ${errorText.substring(0, 50)}`);
+        }
 
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Debounced Instant Search
-  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
+        const data = await res.json();
+        if (data.active) {
+          setAlerts(data.alerts || []);
+        } else {
+          setAlerts([]);
+        }
+      } catch (err) {
+        console.error("Failed to fetch alerts:", err);
+      }
+    };
+    
+    // Initial fetch
+    fetchAlerts();
+    
+    // Poll every 5 minutes
+    const intervalId = setInterval(fetchAlerts, 5 * 60 * 1000);
+    return () => clearInterval(intervalId);
+  }, [location.lat, location.lon]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery);
+    const fetchWeather = async () => {
+      setLoading(true);
+      setErrorMsg(null);
+      try {
+        const res = await fetch(`/api/weather?lat=${location.lat}&lon=${location.lon}`);
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("Server returned non-JSON response (likely an HTML error page)");
+        }
+
+        const data = await res.json();
+        
+        if (!res.ok) {
+           if (res.status === 401) {
+             setErrorMsg("Please add your Google Maps API Key to your .env file to enable the Google Weather API.");
+           } else {
+             setErrorMsg(data.error || "Failed to fetch weather data.");
+           }
+           setWeather(null);
+           setLoading(false);
+           return;
+        }
+
+        setWeather(data);
+      } catch (err) {
+        console.error('Error fetching weather:', err);
+        setErrorMsg("Failed to connect to the weather service.");
+      }
+      setLoading(false);
+    };
+    
+    fetchWeather();
+  }, [location.lat, location.lon]);
+
+  useEffect(() => {
+    if (searchQuery.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(searchQuery)}&count=5&language=en&format=json`);
+        const data = await res.json();
+        if (data.results) {
+          setSearchResults(data.results.map((r: any) => ({
+            name: r.name,
+            lat: r.latitude,
+            lon: r.longitude,
+            country: r.country,
+            admin1: r.admin1
+          })));
+        } else {
+          setSearchResults([]);
+        }
+      } catch (err) {
+        console.error(err);
+      }
     }, 500);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  useEffect(() => {
-    if (debouncedQuery.trim()) {
-      setIsLoading(true);
-      searchYouTube(debouncedQuery).then(results => {
-        setSearchResults(results);
-      }).catch(console.error).finally(() => {
-        setIsLoading(false);
-      });
-    } else {
-      setSearchResults([]);
-    }
-  }, [debouncedQuery]);
+  const CurrentIcon = weather ? getWeatherIcon(weather.current.weatherCode, weather.current.isDay) : Cloud;
+  const currentDesc = weather ? getWeatherDescription(weather.current.weatherCode) : '';
+  const now = new Date();
 
-  // Player State
-  const [queue, setQueue] = useState<SongResult[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(-1);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isShuffle, setIsShuffle] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const formatSunTime = (timeStr?: string | null) => {
+    if (!timeStr) return '--';
+    try {
+      return format(parseISO(timeStr), 'h:mm a');
+    } catch {
+      return timeStr;
+    }
+  };
   
-  const [activeSlot, setActiveSlot] = useState<1 | 2>(1);
-  const activeSlotRef = useRef<1 | 2>(1);
-  activeSlotRef.current = activeSlot;
-  
-  const [slot1Song, setSlot1Song] = useState<SongResult | null>(null);
-  const [slot2Song, setSlot2Song] = useState<SongResult | null>(null);
-  const [slot1Player, setSlot1Player] = useState<YouTubePlayer | null>(null);
-  const [slot2Player, setSlot2Player] = useState<YouTubePlayer | null>(null);
-  const crossfadeTriggeredRef = useRef<boolean>(false);
-  
-  const activePlayer = activeSlot === 1 ? slot1Player : slot2Player;
-  const ytPlayer = activePlayer;
-
-
-  
-  const currentSong = queue[currentIndex] || null;
-
-  useEffect(() => {
-    if (!currentSong) {
-      setSlot1Song(null);
-      setSlot2Song(null);
-      return;
-    }
-    // reset crossfade trigger when new song begins
-    crossfadeTriggeredRef.current = false;
-    
-    setActiveSlot(prev => {
-      if (prev === 1) {
-        if (!slot1Song) {
-          setSlot1Song(currentSong);
-          return 1;
-        } else if (slot1Song.trackId !== currentSong.trackId) {
-          setSlot2Song(currentSong);
-          return 2;
-        }
-      } else {
-        if (!slot2Song) {
-          setSlot2Song(currentSong);
-          return 2;
-        } else if (slot2Song.trackId !== currentSong.trackId) {
-          setSlot1Song(currentSong);
-          return 1;
-        }
-      }
-      return prev;
-    });
-  }, [currentSong]);
-
-
-
-  // Volume crossfader
-  useEffect(() => {
-    let fadeInterval: NodeJS.Timeout;
-    if ((slot1Player || slot2Player) && isPlaying) {
-      fadeInterval = setInterval(() => {
-        try {
-          const outPlayer = activeSlot === 1 ? slot2Player : slot1Player;
-          const inPlayer = activeSlot === 1 ? slot1Player : slot2Player;
-          
-          if (outPlayer && typeof outPlayer.getVolume === 'function') {
-             const outVol = outPlayer.getVolume();
-             if (outVol > 0) {
-               outPlayer.setVolume(Math.max(0, outVol - 2)); // Fade out smoothly
-             } else {
-               outPlayer.pauseVideo();
-             }
-          }
-          
-          if (inPlayer && typeof inPlayer.getVolume === 'function') {
-             const inVol = inPlayer.getVolume();
-             if (inVol < 100) {
-               inPlayer.setVolume(Math.min(100, inVol + 2)); // Fade in smoothly
-             }
-          }
-        } catch (e) {}
-      }, 50);
-    }
-    return () => clearInterval(fadeInterval);
-  }, [activeSlot, slot1Player, slot2Player, isPlaying]);
-
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying && ytPlayer) {
-      interval = setInterval(async () => {
-        try {
-          if (typeof ytPlayer.getCurrentTime === 'function') {
-            const time = await ytPlayer.getCurrentTime();
-            const dur = await ytPlayer.getDuration();
-            if (time !== undefined) setProgress(time);
-            if (dur !== undefined && dur > 0) {
-              setDuration(dur);
-              // Trigger crossfade 5 seconds before end
-              if (dur - time <= 5 && !crossfadeTriggeredRef.current) {
-                crossfadeTriggeredRef.current = true;
-                handleNextRef.current();
-              }
-            }
-          }
-        } catch (e) {}
-      }, 500);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying, ytPlayer]);
-
-  const onPlayerReady = (slot: 1 | 2) => (event: any) => {
-    event.target.setVolume(activeSlotRef.current === slot ? 100 : 0);
-    if (slot === 1) setSlot1Player(event.target);
-    else setSlot2Player(event.target);
-  };
-
-  const onPlayerStateChange = (slot: 1 | 2) => (event: any) => {
-    // Only respond to state changes of the ACTIVE slot, otherwise they fight!
-    if (activeSlotRef.current !== slot) return;
-    try {
-      if (event.data === 1) {
-        setIsPlaying(true);
-        if (event.target.getDuration) setDuration(event.target.getDuration());
-      } else if (event.data === 2) {
-        setIsPlaying(false);
-      } else if (event.data === 0) {
-        if (isLooping) {
-           event.target.seekTo(0);
-           event.target.playVideo();
-        } else {
-           if (!crossfadeTriggeredRef.current) {
-               crossfadeTriggeredRef.current = true;
-               handleNextRef.current();
-           }
-        }
-      }
-    } catch (e) {
-      console.error("Player state change error:", e);
-    }
-  };
-
-  const handleNextRef = useRef<() => void>(() => {});
-  const handleNext = () => {
-
-    if (isShuffle && favorites.length > 0) {
-      const favQueue = favorites.map(f => ({
-        trackId: f.songId,
-        trackName: f.title,
-        artistName: f.artist,
-        artworkUrl100: f.albumArtUrl || '',
-        youtubeId: f.previewUrl || ''
-      }));
-      setQueue(favQueue);
-      setCurrentIndex(Math.floor(Math.random() * favQueue.length));
-      return;
-    }
-
-    if (queue.length === 0) return;
-    
-    let nextIdx = currentIndex + 1;
-    if (isShuffle) {
-      nextIdx = Math.floor(Math.random() * queue.length);
-    } else if (nextIdx >= queue.length) {
-      nextIdx = 0; // loop back
-    }
-    setCurrentIndex(nextIdx);
-  };
-
-  handleNextRef.current = handleNext;
-  const handlePrev = () => {
-    if (queue.length === 0) return;
-    let prevIdx = currentIndex - 1;
-    if (prevIdx < 0) prevIdx = queue.length - 1;
-    setCurrentIndex(prevIdx);
-  };
-
-  const playSong = (song: SongResult, newQueue: SongResult[] = []) => {
-    if (newQueue.length > 0) {
-      setQueue(newQueue);
-      const idx = newQueue.findIndex(s => s.trackId === song.trackId);
-      setCurrentIndex(idx !== -1 ? idx : 0);
-    } else {
-      setQueue([song]);
-      setCurrentIndex(0);
-    }
-    setIsPlaying(true);
-  };
-
-  const togglePlayState = () => {
-    try {
-      if (!ytPlayer) return;
-      
-      const isPlayable = (p: any) => {
-         return p && typeof p.playVideo === 'function';
-      };
-
-      if (!isPlayable(ytPlayer)) return;
-
-      if (isPlaying) {
-        if (isPlayable(slot1Player)) slot1Player.pauseVideo();
-        if (isPlayable(slot2Player)) slot2Player.pauseVideo();
-      } else {
-        ytPlayer.playVideo();
-        // optionally play the fading out track if we wanted, but resuming only active track is fine
-      }
-    } catch (e) {}
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    try {
-      const time = parseFloat(e.target.value);
-      if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
-        ytPlayer.seekTo(time, true);
-        setProgress(time);
-      }
-    } catch (err) {
-      // Silently ignore seek errors if iframe is not ready
-    }
-  };
-
-  const formatTime = (time: number) => {
-    if (!time || isNaN(time)) return '0:00';
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  useEffect(() => {
-    let unsubscribeSnapshot: (() => void) | null = null;
-    let isMounted = true;
-
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      if (!isMounted) return;
-      setUser(currentUser);
-      setIsAuthLoading(false);
-      setAuthError(null);
-
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot();
-        unsubscribeSnapshot = null;
-      }
-
-      if (!currentUser) {
-        setFavorites([]);
-        return;
-      }
-
-      const favoritesPath = `users/${currentUser.uid}/favorites`;
-      const favoritesQuery = query(collection(db, favoritesPath));
-      unsubscribeSnapshot = onSnapshot(favoritesQuery, (snapshot) => {
-        const favs: FavoriteSong[] = snapshot.docs.map((docSnap) => ({
-          ...docSnap.data(),
-          id: docSnap.id,
-        } as unknown as FavoriteSong));
-        setFavorites(favs.sort((a, b) => b.createdAt - a.createdAt));
-      }, (error) => {
-        console.error('Favorites listener failed', error);
-        setAuthError('Your account is signed in, but favorites could not be loaded.');
-        handleFirestoreError(error, OperationType.LIST, favoritesPath);
-      });
-    }, (error) => {
-      console.error('Firebase auth state failed', error);
-      if (isMounted) {
-        setIsAuthLoading(false);
-        setAuthError('Unable to connect to Google sign-in. Check your Firebase configuration and try again.');
-      }
-    });
-
-    getRedirectResult(auth).catch((error: any) => {
-      if (error?.code !== 'auth/no-auth-event') {
-        console.error('Redirect sign-in failed', error);
-        if (isMounted) setAuthError('Google sign-in could not be completed. Please try again.');
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      unsubscribeAuth();
-      if (unsubscribeSnapshot) unsubscribeSnapshot();
-    };
-  }, []);
-
-  const login = async () => {
-    setAuthError(null);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
-
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error: any) {
-      const code = error?.code;
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
-      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-      console.error('Login failed', error);
-      setAuthError(code === 'auth/unauthorized-domain'
-        ? 'This preview domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.'
-        : 'Google sign-in failed. Please try again.');
-    }
-  };
-
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-
-  const confirmLogout = async () => {
-    try {
-      await signOut(auth);
-      setShowLogoutConfirm(false);
-    } catch (error) {
-      console.error("Logout failed", error);
-    }
-  };
-
-  const handleSearch = async (e: React.FormEvent | string) => {
-    if (typeof e !== 'string') e.preventDefault();
-    const query = typeof e === 'string' ? e : searchQuery;
-    if (!query.trim()) return;
-
-    const newRecent = [query, ...recentSearches.filter(s => s !== query)].slice(0, 5);
-    setRecentSearches(newRecent);
-    localStorage.setItem('groove_recent_searches', JSON.stringify(newRecent));
-    setSearchQuery(query);
-    setIsSearchFocused(false);
-    
-    // Explicit submit instantly sets the debounced query
-    setDebouncedQuery(query);
-  };
-
-  const removeRecentSearch = (e: React.MouseEvent, termToRemove: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const newRecent = recentSearches.filter(t => t !== termToRemove);
-    setRecentSearches(newRecent);
-    localStorage.setItem('groove_recent_searches', JSON.stringify(newRecent));
-  };
-
-  const toggleFavorite = async (song: SongResult) => {
-    if (!user) return login();
-
-    const isFav = favorites.find((f) => f.songId === song.trackId);
-    try {
-      if (isFav) {
-        const docRef = doc(db, `users/${user.uid}/favorites`, song.trackId);
-        await deleteDoc(docRef);
-      } else {
-        const docRef = doc(db, `users/${user.uid}/favorites`, song.trackId);
-        const favSong: FavoriteSong = {
-          userId: user.uid,
-          songId: song.trackId,
-          title: song.trackName,
-          artist: song.artistName,
-          albumArtUrl: song.artworkUrl100,
-          previewUrl: song.youtubeId || song.trackId,
-          createdAt: Date.now(),
-        };
-        await setDoc(docRef, favSong);
-      }
-    } catch (error) {
-      handleFirestoreError(error, isFav ? OperationType.DELETE : OperationType.CREATE, `users/${user.uid}/favorites`);
-    }
-  };
-
-  const getSortedResults = () => {
-    if (searchSort === 'title') return [...searchResults].sort((a, b) => a.trackName.localeCompare(b.trackName));
-    if (searchSort === 'artist') return [...searchResults].sort((a, b) => a.artistName.localeCompare(b.artistName));
-    return searchResults;
-  };
-
-  const getSortedFavs = () => {
-    if (favSort === 'title') return [...favorites].sort((a, b) => a.title.localeCompare(b.title));
-    if (favSort === 'artist') return [...favorites].sort((a, b) => a.artist.localeCompare(b.artist));
-    return favorites;
-  };
-
   return (
-    <div className="flex h-screen bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-sans selection:bg-neutral-500/30 overflow-hidden">
-      
-      {/* Desktop Sidebar */}
-      <aside className={cn("bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 flex-col hidden md:flex shrink-0 transition-all duration-300 relative", isSidebarCollapsed ? "w-20" : "w-64")}>
-        <div className="p-6 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-8 h-8 bg-neutral-900 dark:bg-neutral-100 rounded-full flex items-center justify-center text-white dark:text-neutral-900 shadow-lg shadow-black/10 dark:shadow-white/10 shrink-0">
-              <Music className="w-4 h-4" />
-            </div>
-            {!isSidebarCollapsed && <h1 className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-white whitespace-nowrap">Music Player</h1>}
-          </div>
-        </div>
-
-        {/* Toggle Button */}
-        <button 
-          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          className="absolute -right-3 top-7 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 rounded-full p-1 z-10 transition-colors shadow-md"
-        >
-          {isSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-        </button>
-
-        <nav className="flex-1 px-4 space-y-2 mt-4">
-          <button 
-            onClick={() => setActiveTab('search')}
-            className={cn("w-full flex items-center px-4 py-3 rounded-xl transition-colors font-medium text-sm", activeTab === 'search' ? "active bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white" : "text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50", isSidebarCollapsed ? "justify-center px-0" : "gap-3")}
-            title="Search"
-          >
-            <Search className="w-5 h-5 shrink-0" />
-            {!isSidebarCollapsed && <span>Search</span>}
-          </button>
-          <button 
-            onClick={() => setActiveTab('favorites')}
-            className={cn("w-full flex items-center px-4 py-3 rounded-xl transition-colors font-medium text-sm", activeTab === 'favorites' ? "active bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white" : "text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50", isSidebarCollapsed ? "justify-center px-0" : "gap-3")}
-            title="Your Favorites"
-          >
-            <Heart className="w-5 h-5 shrink-0" />
-            {!isSidebarCollapsed && <span>Your Favorites</span>}
-          </button>
-        </nav>
-
-        <div className="p-4 border-t border-neutral-200 dark:border-neutral-800">
-          {user ? (
-            <div className={cn("flex items-center", isSidebarCollapsed ? "justify-center flex-col gap-4" : "gap-3 px-2")}>
-              <img src={user.photoURL || ''} alt="User" className="w-8 h-8 rounded-full border border-neutral-300 dark:border-neutral-700 shrink-0" title={user.displayName || 'User'} />
-              {!isSidebarCollapsed ? (
-                <>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-neutral-900 dark:text-white truncate">{user.displayName || 'User'}</p>
-                  </div>
-                  <button onClick={() => setShowLogoutConfirm(true)} className="p-2 text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-lg transition-colors" title="Sign Out">
-                    <LogOut className="w-4 h-4" />
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => setShowLogoutConfirm(true)} className="p-2 text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-lg transition-colors" title="Sign Out">
-                  <LogOut className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          ) : (
-            <button onClick={login} disabled={isAuthLoading} className={cn("flex items-center justify-center gap-2 bg-white text-pink-500 py-2.5 rounded-xl text-sm font-medium hover:bg-neutral-200 transition-colors w-full disabled:cursor-wait disabled:opacity-60", isSidebarCollapsed ? "px-0" : "px-4")} title="Sign In">
-              {isAuthLoading ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <LogIn className="w-4 h-4 shrink-0" />}
-              {!isSidebarCollapsed && <span>{isAuthLoading ? 'Checking session…' : 'Sign In'}</span>}
-            </button>
-          )}
-        </div>
-      </aside>
-
-        {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto pb-40 md:pb-32 relative flex flex-col">
-        {authError && (
-          <div role="alert" className="mx-4 mt-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-300">
-            <div className="flex items-start justify-between gap-3">
-              <span>{authError}</span>
-              <button type="button" onClick={() => setAuthError(null)} className="shrink-0" aria-label="Dismiss authentication error">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
+    <div className={`min-h-screen transition-colors duration-300 font-sans p-4 md:p-8 ${isDark ? 'bg-slate-950 text-slate-50 selection:bg-blue-500/30' : 'bg-slate-100 text-slate-900 selection:bg-blue-500/20'}`}>
+      <div className="max-w-5xl mx-auto space-y-8">
         
-        {/* Mobile Header (Hidden on Desktop) */}
-        <div className="md:hidden flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/80 backdrop-blur-xl sticky top-0 z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-neutral-900 dark:bg-neutral-100 rounded-full flex items-center justify-center text-white dark:text-neutral-900">
-              <Music className="w-4 h-4" />
+        <header className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-50">
+          <div className="flex items-center gap-4 w-full md:w-auto">
+            <div className={`w-12 h-12 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg ${isDark ? 'shadow-blue-500/20' : 'shadow-blue-500/30'} shrink-0`}>
+              <Cloud className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-lg font-semibold text-neutral-900 dark:text-white">Music Player</h1>
-          </div>
-          <div className="flex gap-2">
-             <button onClick={() => setActiveTab('search')} className={cn("p-2 rounded-lg", activeTab === 'search' ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white" : "text-neutral-600 dark:text-neutral-400")}>
-               <Search className="w-5 h-5" />
-             </button>
-             <button onClick={() => setActiveTab('favorites')} className={cn("p-2 rounded-lg", activeTab === 'favorites' ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white" : "text-neutral-600 dark:text-neutral-400")}>
-               <Heart className="w-5 h-5" />
-             </button>
-             {user ? (
-                <button onClick={() => setShowLogoutConfirm(true)} className="p-2 text-neutral-600 dark:text-neutral-400">
-                  <LogOut className="w-5 h-5" />
-                </button>
-             ) : (
-                <button onClick={login} className="p-2 text-neutral-600 dark:text-neutral-400">
-                  <LogIn className="w-5 h-5" />
-                </button>
-             )}
-          </div>
-        </div>
-
-        <div className="max-w-5xl mx-auto w-full px-4 md:px-6 py-6 md:py-8">
-          {activeTab === 'search' ? (
-            <div className="space-y-8">
-              <div className="relative group max-w-2xl z-20 mx-auto">
-                <form onSubmit={handleSearch}>
-                  <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-neutral-600 dark:text-neutral-400 group-focus-within:text-pink-500 dark:group-focus-within:text-pink-300 transition-colors">
-                    <Search className="w-5 h-5" />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search for a song or artist..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onFocus={() => setIsSearchFocused(true)}
-                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-                    className="w-full bg-neutral-100/50 dark:bg-neutral-800/50 border border-neutral-300 dark:border-neutral-700/50 rounded-full py-4 pl-12 pr-24 text-base outline-none focus:bg-neutral-100 dark:bg-neutral-800 focus:border-pink-400/50 focus:ring-4 focus:ring-pink-400/10 transition-all placeholder:text-neutral-500 dark:text-neutral-500 shadow-sm"
-                  />
-                  
-                  {searchQuery && (
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setSearchQuery('');
-                        setDebouncedQuery('');
-                      }}
-                      className="absolute inset-y-0 right-16 px-2 flex items-center justify-center text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 transition-colors"
-                      title="Clear"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-
-                  <button 
-                    type="submit"
-                    className="absolute inset-y-2 right-2 bg-pink-500 dark:bg-pink-400 hover:bg-pink-600 dark:hover:bg-pink-300 text-white dark:text-white rounded-full px-4 flex items-center justify-center transition-colors shadow-sm"
-                    title="Search"
-                  >
-                    <Search className="w-4 h-4" />
-                  </button>
-                </form>
-                {isSearchFocused && recentSearches.length > 0 && (
-                  <div className="absolute top-full mt-2 w-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-2xl shadow-xl overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <p className="px-4 py-2 text-xs font-semibold text-neutral-500 dark:text-neutral-500 uppercase tracking-wider">Recent Searches</p>
-                    {recentSearches.map(term => (
-                      <div key={term} className="w-full flex items-center hover:bg-neutral-700/50 transition-colors group">
-                        <button 
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            handleSearch(term);
-                          }} 
-                          className="flex-1 text-left px-4 py-3 flex items-center gap-3 text-neutral-700 dark:text-neutral-300 hover:text-pink-500 dark:hover:text-pink-300"
-                        >
-                          <Clock className="w-4 h-4 text-neutral-500 dark:text-neutral-500" />
-                          {term}
-                        </button>
-                        <button 
-                          onMouseDown={(e) => {
-                             e.preventDefault();
-                             removeRecentSearch(e, term);
-                          }}
-                          className="p-3 text-neutral-500 dark:text-neutral-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove from history"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <section>
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl font-semibold flex items-center gap-2">
-                    Search Results
-                  </h2>
-                  {searchResults.length > 0 && (
-                    <div className="relative">
-                      <select 
-                        value={searchSort}
-                        onChange={(e) => setSearchSort(e.target.value as any)}
-                        className="appearance-none bg-neutral-100/50 dark:bg-neutral-800/50 border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 text-sm rounded-xl px-4 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-neutral-500/50"
-                      >
-                        <option value="default">Best Match</option>
-                        <option value="title">Title</option>
-                        <option value="artist">Artist</option>
-                      </select>
-                      <ChevronDown className="w-4 h-4 text-neutral-500 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                  )}
-                </div>
-                
-                {isLoading ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {[1, 2, 3, 4, 5, 6].map(i => <SkeletonCard key={i} />)}
-                  </div>
-                ) : searchResults.length === 0 ? (
-                  <div className="h-40 flex items-center justify-center border border-dashed border-neutral-200 dark:border-neutral-800 rounded-2xl text-neutral-500 dark:text-neutral-500">
-                    Search for a track to get started
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {getSortedResults().map((song) => (
-                      <SongCard 
-                        key={`search-${song.trackId}`} 
-                        song={song} 
-                        isPlaying={isPlaying && currentSong?.trackId === song.trackId}
-                        isFavorite={!!favorites.find((f) => f.songId === song.trackId)}
-                        onPlay={() => {
-                          if (currentSong?.trackId === song.trackId) {
-                            togglePlayState();
-                          } else {
-                            playSong(song, getSortedResults());
-                          }
-                        }}
-                        onFavorite={() => toggleFavorite(song)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
+            <div>
+              <h1 className={`text-2xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Weather Dashboard</h1>
+              <p className={`text-sm font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{format(now, 'EEEE, MMMM d, yyyy')}</p>
             </div>
-          ) : (
-            <div className="space-y-8">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-semibold flex items-center gap-2">
-                  <Heart className="w-6 h-6 text-rose-500 fill-rose-500" />
-                  Your Favorites
-                </h2>
-                {favorites.length > 0 && user && (
-                  <div className="relative">
-                    <select 
-                      value={favSort}
-                      onChange={(e) => handleFavSortChange(e.target.value as any)}
-                      className="appearance-none bg-neutral-100/50 dark:bg-neutral-800/50 border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 text-sm rounded-xl px-4 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-rose-500/50"
-                    >
-                      <option value="date">Date Added</option>
-                      <option value="title">Title</option>
-                      <option value="artist">Artist</option>
-                    </select>
-                    <ChevronDown className="w-4 h-4 text-neutral-500 dark:text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  </div>
-                )}
+          </div>
+          
+          <div className="w-full md:w-auto flex items-center gap-2 relative z-[60]">
+            <div className="relative flex-1 md:w-80">
+              <div className="relative group">
+                <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${isDark ? 'text-slate-400 group-focus-within:text-blue-400' : 'text-slate-400 group-focus-within:text-blue-500'} transition-colors`} />
+                <input
+                  type="text"
+                  placeholder="Search location..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={`w-full ${isDark ? 'bg-slate-900 border-slate-800 text-slate-200 placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 shadow-sm'} border rounded-2xl py-3.5 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all`}
+                />
               </div>
               
-              {!user ? (
-                <div className="text-center py-20 border border-neutral-200 dark:border-neutral-800 rounded-3xl bg-neutral-50/50 dark:bg-neutral-900/50">
-                  <Heart className="w-12 h-12 text-neutral-700 mx-auto mb-4" />
-                  <p className="text-neutral-600 dark:text-neutral-400 text-base mb-6">Sign in to save and listen to your favorite tracks.</p>
-                  <button onClick={login} className="bg-white text-pink-500 px-8 py-3 rounded-full text-sm font-medium hover:bg-neutral-200 transition-colors shadow-lg">
-                    Sign In to Continue
-                  </button>
-                </div>
-              ) : favorites.length === 0 ? (
-                <div className="text-center py-20 border border-neutral-200 dark:border-neutral-800 border-dashed rounded-3xl">
-                  <Music className="w-12 h-12 text-neutral-700 mx-auto mb-4" />
-                  <p className="text-neutral-500 dark:text-neutral-500 text-base">No favorites yet. Search and heart some songs!</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {getSortedFavs().map((fav) => {
-                    const favSong: SongResult = {
-                      trackId: fav.songId,
-                      trackName: fav.title,
-                      artistName: fav.artist,
-                      artworkUrl100: fav.albumArtUrl || '',
-                      youtubeId: fav.previewUrl || ''
-                    };
-                    return (
-                      <SongCard
-                        key={fav.songId}
-                        song={favSong}
-                        isPlaying={isPlaying && currentSong?.trackId === fav.songId}
-                        isFavorite={true}
-                        onPlay={() => {
-                          if (currentSong?.trackId === fav.songId) {
-                            togglePlayState();
-                          } else {
-                            const sortedFavs = getSortedFavs();
-                            const favQueue = sortedFavs.map(f => ({
-                              trackId: f.songId,
-                              trackName: f.title,
-                              artistName: f.artist,
-                              artworkUrl100: f.albumArtUrl || '',
-                              youtubeId: f.previewUrl || ''
-                            }));
-                            playSong(favSong, favQueue);
-                          }
-                        }}
-                        onFavorite={() => toggleFavorite(favSong)}
-                      />
-                    );
-                  })}
+              {searchQuery.length >= 2 && searchResults.length > 0 && (
+                <div className={`absolute top-full left-0 right-0 mt-2 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'} border rounded-2xl shadow-xl overflow-hidden z-[60]`}>
+                  {searchResults.map((res, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setLocation(res);
+                        setSearchQuery('');
+                        setSearchResults([]);
+                      }}
+                      className={`w-full flex flex-col text-left px-5 py-3.5 ${isDark ? 'hover:bg-slate-800/50 border-slate-800/50 text-slate-200' : 'hover:bg-slate-50 border-slate-100 text-slate-900'} transition-colors border-b last:border-0`}
+                    >
+                      <span className={`font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{res.name}</span>
+                      <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'} mt-0.5`}>
+                        {[res.admin1, res.country].filter(Boolean).join(', ')}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
-          )}
-        </div>
-      </main>
-
-      {/* Dual Hidden YouTube Players for Crossfading */}
-      <div className="hidden">
-        {slot1Song && slot1Song.youtubeId && (
-          <YouTube
-            videoId={slot1Song.youtubeId}
-            opts={{ 
-              height: '0', 
-              width: '0',
-              host: 'https://www.youtube.com',
-              playerVars: { 
-                autoplay: 1, 
-                controls: 0, 
-                disablekb: 1,
-                origin: typeof window !== 'undefined' ? window.location.origin : '',
-                enablejsapi: 1
-              } 
-            }}
-            onReady={onPlayerReady(1)}
-            onStateChange={onPlayerStateChange(1)}
-            onError={(e) => console.error("YouTube Error 1:", e)}
-          />
-        )}
-        {slot2Song && slot2Song.youtubeId && (
-          <YouTube
-            videoId={slot2Song.youtubeId}
-            opts={{ 
-              height: '0', 
-              width: '0',
-              host: 'https://www.youtube.com',
-              playerVars: { 
-                autoplay: 1, 
-                controls: 0, 
-                disablekb: 1,
-                origin: typeof window !== 'undefined' ? window.location.origin : '',
-                enablejsapi: 1
-              } 
-            }}
-            onReady={onPlayerReady(2)}
-            onStateChange={onPlayerStateChange(2)}
-            onError={(e) => console.error("YouTube Error 2:", e)}
-          />
-        )}
-      </div>
-
-      {/* Bottom Global Player */}
-      {currentSong && (
-        <div className={cn("fixed bottom-0 left-0 right-0 h-auto md:h-24 py-3 md:py-0 bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 flex items-center px-4 md:px-6 z-50 animate-in slide-in-from-bottom-8 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] transition-all duration-300", isSidebarCollapsed ? "md:left-20" : "md:left-64")}>
-          <div className="max-w-7xl mx-auto w-full flex flex-col md:flex-row items-center justify-between gap-3 md:gap-4 md:h-full">
             
-            {/* Now Playing Info */}
-            <div className="flex items-center justify-between md:justify-start gap-3 md:gap-4 w-full md:w-auto md:flex-1 min-w-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-lg overflow-hidden shrink-0 bg-neutral-100 dark:bg-neutral-800 shadow-md">
-                  <img src={currentSong.artworkUrl100} alt={currentSong.trackName} className="w-full h-full object-cover" />
-                </div>
-                <div className="min-w-0">
-                  <p className="font-mono text-sm font-medium text-neutral-900 dark:text-white truncate">{currentSong.trackName}</p>
-                  <p className="font-mono text-xs text-neutral-600 dark:text-neutral-400 truncate">{currentSong.artistName}</p>
-                  <div className="font-mono flex items-center gap-1.5 mt-1 text-[9px] text-neutral-500 font-bold tracking-tight opacity-70">
-                    <span className="bg-neutral-200/50 dark:bg-neutral-800/50 px-1 py-0.5 rounded-sm">{getTechMeta(currentSong.trackId).format}</span>
-                    <span className="bg-neutral-200/50 dark:bg-neutral-800/50 px-1 py-0.5 rounded-sm">{getTechMeta(currentSong.trackId).bitrate}</span>
-                  </div>
-                </div>
-              </div>
-              
-                            {/* Mobile quick controls */}
-              <div className="flex items-center md:hidden gap-2 shrink-0">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setIsQueueOpen(!isQueueOpen); }}
-                  className={cn("p-2 rounded-full transition-colors", isQueueOpen ? "bg-pink-500 text-white dark:bg-pink-400 dark:text-white" : "hover:bg-neutral-200 dark:hover:bg-neutral-800")}
-                >
-                  <ListMusic className="w-5 h-5" />
-                </button>
-                <button 
-                  onClick={(e) => { e.stopPropagation(); toggleFavorite(currentSong); }}
-                  className="p-2 rounded-full transition-colors hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                >
-                  <Heart className={cn("w-5 h-5", favorites.find(f => f.songId === currentSong.trackId) ? "text-rose-500 fill-current" : "text-neutral-500")} />
-                </button>
-                <button 
-                  onClick={(e) => { e.stopPropagation(); togglePlayState(); }}
-                  className="w-10 h-10 bg-pink-500 dark:bg-pink-400 rounded-full flex items-center justify-center text-white hover:scale-105 transition-transform shadow-sm border-2 border-transparent"
-                >
-                  {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current translate-x-0.5" />}
-                </button>
-              </div>
-              
-              {/* Desktop Favorite */}
-              <button 
-                onClick={() => toggleFavorite(currentSong)}
-                className="hidden md:flex ml-2 p-2 rounded-full transition-colors hover:bg-neutral-200 dark:hover:bg-neutral-800 shrink-0"
-              >
-                <Heart className={cn("w-4 h-4", favorites.find(f => f.songId === currentSong.trackId) ? "text-rose-500 fill-current" : "text-neutral-500 dark:text-neutral-500")} />
-              </button>
-            </div>
+            <button
+              onClick={handleGetLocation}
+              disabled={isLocating}
+              className={`p-3.5 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-blue-400 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-slate-50 shadow-sm'} border rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all flex items-center justify-center shrink-0 disabled:opacity-50`}
+              title="Use current location"
+            >
+              <LocateFixed className={`w-5 h-5 ${isLocating ? 'animate-pulse text-blue-500' : ''}`} />
+            </button>
 
-            {/* Player Controls */}
-            <div className="flex flex-col items-center justify-center w-full md:flex-[2] gap-1.5 md:gap-2">
-              <div className="hidden md:flex items-center justify-center gap-6">
-                <button 
-                  onClick={() => setIsShuffle(!isShuffle)}
-                  className={cn("text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 transition-colors", isShuffle && "text-pink-500 dark:text-pink-300")}
-                >
-                  <Shuffle className="w-4 h-4" />
-                </button>
-                <button onClick={handlePrev} className="text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 transition-colors">
-                  <SkipBack className="w-5 h-5 fill-current" />
-                </button>
-                <button 
-                  onClick={togglePlayState}
-                  className="w-10 h-10 bg-pink-500 dark:bg-pink-400 rounded-full flex items-center justify-center text-white hover:scale-105 transition-transform border-2 border-transparent"
-                >
-                  {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current translate-x-0.5" />}
-                </button>
-                <button onClick={handleNext} className="text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 transition-colors">
-                  <SkipForward className="w-5 h-5 fill-current" />
-                </button>
-                <button 
-                  onClick={() => setIsLooping(!isLooping)}
-                  className={cn("hover:text-pink-500 dark:hover:text-pink-300 transition-colors", isLooping ? "text-pink-500 dark:text-pink-300" : "text-neutral-600 dark:text-neutral-400")}
-                  title="Loop Song"
-                >
-                  {isLooping ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
-                </button>
-              </div>
-              
-              <div className="flex items-center justify-center gap-3 w-full max-w-md">
-                <span className="font-mono text-[10px] md:text-[11px] text-neutral-600 dark:text-neutral-400 font-medium w-8 md:w-10 text-right">{formatTime(progress)}</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 100}
-                  value={progress}
-                  onChange={handleSeek}
-                  className="flex-1 h-1 bg-neutral-200 dark:bg-neutral-700 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-pink-500 dark:[&::-webkit-slider-thumb]:border-pink-300 cursor-pointer"
-                />
-                <span className="font-mono text-[10px] md:text-[11px] text-neutral-600 dark:text-neutral-400 font-medium w-8 md:w-10 text-left">{formatTime(duration)}</span>
-              </div>
-            </div>
+            <button
+              onClick={toggleTheme}
+              className={`p-3.5 ${isDark ? 'bg-slate-900 border-slate-800 text-amber-400 hover:text-amber-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:text-blue-600 hover:bg-slate-50 shadow-sm'} border rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all flex items-center justify-center shrink-0 cursor-pointer`}
+              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label="Toggle dark and light theme"
+            >
+              {isDark ? (
+                <Sun className="w-5 h-5 transition-transform duration-300 hover:rotate-45" />
+              ) : (
+                <Moon className="w-5 h-5 transition-transform duration-300 hover:-rotate-12" />
+              )}
+            </button>
+          </div>
+        </header>
 
-                        {/* Right Spacing / Extras */}
-            <div className="hidden md:flex justify-end items-center gap-4 flex-1 w-full relative">
-              <button 
-                onClick={() => setIsQueueOpen(!isQueueOpen)}
-                className={cn("p-2 rounded-lg transition-colors border-2", isQueueOpen ? "bg-pink-500 text-white dark:bg-pink-400 dark:text-white border-transparent" : "text-neutral-600 dark:text-neutral-400 hover:text-pink-500 dark:hover:text-pink-300 border-transparent hover:border-neutral-300 dark:hover:border-neutral-700")}
-                title="Playing Next"
-              >
-                <ListMusic className="w-5 h-5" />
-              </button>
+        {locationNotice && (
+          <div className={`p-4 rounded-2xl flex items-center justify-between gap-3 border transition-all duration-300 ${
+            locationNotice.type === 'warning'
+              ? (isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800')
+              : (isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-800')
+          }`}>
+            <div className="flex items-center gap-2.5 text-sm font-medium">
+              <Info className="w-4 h-4 shrink-0" />
+              <span>{locationNotice.message}</span>
             </div>
-            
-            {/* Queue Panel Overlay (Drawer on Mobile, Popover on Desktop) */}
-            {isQueueOpen && (
-              <>
-                {/* Mobile Backdrop */}
-                <div 
-                  className="fixed inset-0 bg-black/40 z-[90] md:hidden animate-in fade-in duration-200"
-                  onClick={() => setIsQueueOpen(false)}
-                />
-                <div className="fixed md:absolute inset-y-0 right-0 md:inset-y-auto md:bottom-[calc(100%+0.5rem)] md:right-4 lg:right-6 w-[85vw] max-w-[360px] md:w-96 h-full md:h-auto max-h-full md:max-h-[400px] bg-neutral-50 dark:bg-neutral-900 flex flex-col neo-modal border-l-2 md:border-2 border-neutral-200 dark:border-neutral-800 shadow-2xl z-[100] md:z-50 animate-in slide-in-from-right-16 md:slide-in-from-right-0 md:slide-in-from-bottom-2 fade-in duration-300 md:duration-200 rounded-l-2xl md:rounded-3xl">
-                  <div className="p-4 md:p-4 pt-10 md:pt-4 border-b-2 border-neutral-200 dark:border-neutral-800 flex items-center justify-between shrink-0">
-                    <h3 className="font-mono font-bold text-sm uppercase tracking-wider">Playing Next</h3>
-                    <button onClick={() => setIsQueueOpen(false)} className="p-1 -mr-1 text-neutral-500 hover:text-pink-500 dark:hover:text-pink-300 transition-colors">
-                      <X className="w-6 h-6 md:w-5 md:h-5" />
-                    </button>
-                  </div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
-                  {queue.length === 0 ? (
-                    <div className="p-8 text-center text-sm text-neutral-500 font-mono">Queue is empty</div>
-                  ) : (
-                    <div className="flex flex-col gap-1">
-                      {queue.map((song, idx) => (
-                        <button
-                          key={`${song.trackId}-${idx}`}
-                          onClick={() => {
-                            setCurrentIndex(idx);
-                            if (!isPlaying) togglePlayState();
-                          }}
-                          className={cn(
-                            "w-full text-left flex items-center gap-3 p-2 rounded-xl transition-all hover:bg-neutral-200 dark:hover:bg-neutral-800",
-                            idx === currentIndex ? "bg-pink-100 dark:bg-pink-900/30 border border-pink-200 dark:border-pink-800/50" : "border border-transparent"
-                          )}
-                        >
-                          <img src={song.artworkUrl100} className="w-10 h-10 rounded-lg object-cover border border-neutral-200 dark:border-neutral-800" alt="" />
-                          <div className="min-w-0 flex-1">
-                            <p className={cn("font-mono text-xs font-bold truncate", idx === currentIndex ? "text-pink-500 dark:text-pink-300" : "")}>
-                              {song.trackName}
-                            </p>
-                            <p className="font-mono text-[10px] text-neutral-500 truncate">{song.artistName}</p>
-                          </div>
-                          {idx === currentIndex && <Play className="w-3 h-3 fill-pink-500 dark:fill-pink-300 text-pink-500 dark:text-pink-300 shrink-0" />}
-                        </button>
-                      ))}
+            <button
+              onClick={() => setLocationNotice(null)}
+              className="p-1 rounded-lg hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+              aria-label="Dismiss notice"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {alerts.length > 0 && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-2xl overflow-hidden relative group">
+            <div className="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
+            <div className="p-4 md:p-6 flex items-start gap-4">
+              <div className="shrink-0 mt-0.5">
+                <AlertTriangle className="w-6 h-6 text-red-500 animate-pulse" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-red-500 font-semibold text-lg flex items-center gap-2">
+                  Active Weather {alerts.length > 1 ? 'Alerts' : 'Alert'}
+                  <span className="text-xs bg-red-500/20 text-red-500 px-2 py-0.5 rounded-full font-medium">
+                    {alerts.length}
+                  </span>
+                </h3>
+                <div className="mt-3 space-y-4">
+                  {alerts.map((alert, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <h4 className={`font-medium ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{alert.event}</h4>
+                      {alert.headline && (
+                        <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{alert.headline}</p>
+                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
-              </>
-            )}
-            
-          </div>
-        </div>
-      )}
-
-      {/* Logout Confirmation Modal */}
-      {showLogoutConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-neutral-900/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="neo-modal bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
-            <h3 className="text-xl font-semibold text-neutral-900 dark:text-white mb-2">Sign Out</h3>
-            <p className="text-neutral-600 dark:text-neutral-400 mb-8">Are you sure you want to sign out of Music Player?</p>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setShowLogoutConfirm(false)}
-                className="flex-1 px-4 py-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium hover:bg-neutral-700 transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={confirmLogout}
-                className="flex-1 px-4 py-3 rounded-xl bg-rose-500 text-neutral-900 dark:text-white font-medium hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20"
-              >
-                Sign Out
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-    </div>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="group bg-neutral-100/50 dark:bg-neutral-800/30 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-4 flex items-center gap-4 animate-pulse">
-      <div className="relative w-16 h-16 rounded-xl overflow-hidden shadow-lg shrink-0 bg-neutral-200/50 dark:bg-neutral-700/50"></div>
-      <div className="flex-1 min-w-0 space-y-3">
-        <div className="h-4 bg-neutral-200/50 dark:bg-neutral-700/50 rounded-full w-2/3"></div>
-        <div className="h-3 bg-neutral-200/50 dark:bg-neutral-700/50 rounded-full w-1/3"></div>
-      </div>
-      <div className="w-10 h-10 rounded-full bg-neutral-200/50 dark:bg-neutral-700/50 shrink-0"></div>
-    </div>
-  );
-}
-
-
-const getTechMeta = (id: string) => {
-  const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const bitrates = ['320 KBPS', '1411 KBPS', '24-BIT', '256 KBPS AAC', 'DSD64'];
-  const formats = ['WAV', 'MP3', 'FLAC', 'ALAC', 'AAC', 'AIFF'];
-  const sampleRates = ['44.1KHZ', '48KHZ', '96KHZ', '192KHZ'];
-  
-  return {
-    bitrate: bitrates[hash % bitrates.length],
-    format: formats[(hash + 3) % formats.length],
-    sampleRate: sampleRates[(hash + 7) % sampleRates.length]
-  };
-};
-
-function SongCard({ 
-  song, 
-  isPlaying, 
-  isFavorite, 
-  onPlay, 
-  onFavorite 
-}: { 
-  key?: string;
-  song: SongResult; 
-  isPlaying: boolean; 
-  isFavorite: boolean; 
-  onPlay: () => void; 
-  onFavorite: () => void | Promise<void>; 
-}) {
-  return (
-    <div onClick={onPlay} className="neo-card cursor-pointer group bg-neutral-100/50 dark:bg-neutral-800/30 hover:bg-neutral-200 dark:hover:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:border-neutral-700 rounded-2xl p-4 transition-all duration-300 hover:-rotate-1 hover:scale-[1.02] flex items-center gap-4">
-      <div className="relative w-16 h-16 rounded-xl overflow-hidden shadow-lg shrink-0">
-        <img src={song.artworkUrl100} alt={song.trackName} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-        <button 
-          className={cn(
-            "absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity",
-            isPlaying && "opacity-100 bg-neutral-900/40 dark:bg-black/60"
-          )}
-        >
-          {isPlaying ? (
-            <Pause className="w-6 h-6 text-neutral-900 dark:text-white" />
-          ) : (
-            <Play className="w-6 h-6 text-neutral-900 dark:text-white translate-x-0.5" />
-          )}
-        </button>
-        {isPlaying && (
-          <div className="absolute bottom-1 right-1 w-4 h-4 flex items-end justify-center gap-0.5">
-            <span className="w-0.5 bg-pink-300 h-2 animate-[bounce_1s_infinite]" />
-            <span className="w-0.5 bg-pink-300 h-3 animate-[bounce_1s_infinite_0.2s]" />
-            <span className="w-0.5 bg-pink-300 h-1.5 animate-[bounce_1s_infinite_0.4s]" />
+        {errorMsg ? (
+          <div className="flex flex-col items-center justify-center h-[60vh] text-center max-w-lg mx-auto">
+             <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-6 rounded-3xl">
+               <h2 className="text-xl font-semibold mb-2">Configuration Required</h2>
+               <p className={isDark ? "text-slate-300" : "text-slate-600"}>{errorMsg}</p>
+             </div>
           </div>
-        )}
-      </div>
-      
-      <div className="flex-1 min-w-0">
-        <p className="font-mono text-base font-medium text-neutral-900 dark:text-white truncate mb-0.5">{song.trackName}</p>
-        <p className="font-mono text-sm text-neutral-600 dark:text-neutral-400 truncate">{song.artistName}</p>
-        <div className="font-mono flex items-center gap-2 mt-1.5 text-[10px] text-neutral-500 font-bold tracking-tight opacity-70">
-          <span className="bg-neutral-200/50 dark:bg-neutral-800/50 px-1 py-0.5 rounded-sm">{getTechMeta(song.trackId).format}</span>
-          <span className="bg-neutral-200/50 dark:bg-neutral-800/50 px-1 py-0.5 rounded-sm">{getTechMeta(song.trackId).bitrate}</span>
-          <span className="bg-neutral-200/50 dark:bg-neutral-800/50 px-1 py-0.5 rounded-sm hidden sm:inline-block">{getTechMeta(song.trackId).sampleRate}</span>
-        </div>
-      </div>
+        ) : loading || !weather ? (
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          </div>
+        ) : (
+          <main className="max-w-3xl mx-auto space-y-6 md:space-y-8">
+              
+              <div className={`${isDark ? 'bg-gradient-to-br from-slate-900 to-slate-900/80 border-white/5 shadow-xl text-white' : 'bg-gradient-to-br from-white to-slate-50 border-slate-200/80 shadow-xl shadow-slate-200/50 text-slate-900'} rounded-3xl p-6 md:p-8 border relative overflow-hidden group transition-all duration-300`}>
+                <div className={`absolute top-0 right-0 -mt-16 -mr-16 w-64 h-64 ${isDark ? 'bg-blue-500/10 group-hover:bg-blue-500/20' : 'bg-blue-500/5 group-hover:bg-blue-500/10'} rounded-full blur-3xl transition-colors duration-700`}></div>
+                
+                <div className="relative z-10">
+                  <div className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'} mb-6 md:mb-8`}>
+                    <MapPin className="w-5 h-5 text-blue-500" />
+                    <h2 className={`font-medium text-lg ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                      {location.name}{location.admin1 ? `, ${location.admin1}` : ''}
+                    </h2>
+                  </div>
+                  
+                  <div className="flex items-center justify-between mt-4">
+                    <div>
+                      <div className={`text-[4rem] md:text-[5rem] font-bold tracking-tighter leading-none ${isDark ? 'text-white' : 'text-slate-900'} flex items-start`}>
+                        {Math.round(weather.current.temperature)}
+                        <span className="text-3xl md:text-4xl text-blue-500 mt-2 ml-1">°</span>
+                      </div>
+                      <p className={`text-lg md:text-xl ${isDark ? 'text-slate-300' : 'text-slate-600'} font-medium mt-4 capitalize`}>
+                        {currentDesc}
+                      </p>
+                    </div>
+                    <div className="w-28 h-28 md:w-40 md:h-40 relative">
+                      <CurrentIcon className="w-full h-full text-blue-500 drop-shadow-[0_0_15px_rgba(59,130,246,0.25)]" strokeWidth={1.5} />
+                    </div>
+                  </div>
+                  
+                  <div className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 mt-8 md:mt-10 pt-6 md:pt-8 border-t ${isDark ? 'border-slate-800/50' : 'border-slate-200'}`}>
+                    <div className="flex flex-col gap-2">
+                      <div className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'} text-xs md:text-sm font-medium`}>
+                        <Thermometer className="w-4 h-4 text-blue-500" /> <span>Feels Like</span>
+                      </div>
+                      <span className={`text-lg md:text-xl font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{Math.round(weather.current.feelsLike)}°</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'} text-xs md:text-sm font-medium`}>
+                        <Wind className="w-4 h-4 text-blue-500" /> <span>Wind</span>
+                      </div>
+                      <span className={`text-lg md:text-xl font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{Math.round(weather.current.windSpeed)} <span className={`text-xs md:text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'} font-normal`}>km/h</span></span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'} text-xs md:text-sm font-medium`}>
+                        <Droplets className="w-4 h-4 text-blue-500" /> <span>Humidity</span>
+                      </div>
+                      <span className={`text-lg md:text-xl font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{weather.current.humidity}<span className={`text-xs md:text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'} font-normal`}>%</span></span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'} text-xs md:text-sm font-medium`}>
+                        <Sunrise className="w-4 h-4 text-amber-500" /> <span>Sunrise</span>
+                      </div>
+                      <span className={`text-base md:text-lg font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                        {formatSunTime(weather.current.sunrise)}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'} text-xs md:text-sm font-medium`}>
+                        <Sunset className="w-4 h-4 text-orange-500" /> <span>Sunset</span>
+                      </div>
+                      <span className={`text-base md:text-lg font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                        {formatSunTime(weather.current.sunset)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-      <button 
-        onClick={(e) => { e.stopPropagation(); onFavorite(); }}
-        className={cn(
-          "p-3 rounded-full transition-all duration-300",
-          isFavorite 
-            ? "text-rose-500 bg-rose-500/10 hover:bg-rose-500/20" 
-            : "text-neutral-500 dark:text-neutral-500 hover:text-rose-400 hover:bg-neutral-700"
+              <div className={`${isDark ? 'bg-slate-900/50 border-white/5' : 'bg-white border-slate-200 shadow-sm'} rounded-3xl p-6 md:p-8 border transition-all duration-300`}>
+                <h3 className={`font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'} mb-6 flex items-center gap-2`}>
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                  24-Hour Forecast
+                </h3>
+                
+                <div className="flex gap-4 overflow-x-auto pb-4 hide-scrollbar snap-x snap-mandatory">
+                  {weather.hourly.time
+                    .map((timeStr, i) => ({
+                      time: parseISO(timeStr),
+                      temp: weather.hourly.temperature[i],
+                      code: weather.hourly.weatherCode[i],
+                    }))
+                    .filter(item => item.time >= now || (now.getHours() === item.time.getHours() && now.getDate() === item.time.getDate()))
+                    .slice(0, 24)
+                    .map((item, i) => {
+                      const Icon = getWeatherIcon(item.code, 1);
+                      return (
+                        <div key={i} className={`flex-shrink-0 flex flex-col items-center justify-between p-4 ${isDark ? 'bg-slate-800/30 hover:bg-slate-800/60 border-white/5 hover:border-white/10' : 'bg-slate-50 hover:bg-white border-slate-200/70 hover:border-slate-300 hover:shadow-md'} rounded-2xl w-28 h-40 snap-start border hover:-translate-y-1.5 transition-all duration-300 cursor-pointer group`}>
+                          <div className="flex flex-col items-center gap-0.5 text-center">
+                            <span className={`${isDark ? 'text-slate-200' : 'text-slate-800'} text-sm font-semibold`}>
+                              {i === 0 ? 'Now' : format(item.time, 'h:mm a')}
+                            </span>
+                            <span className={`${isDark ? 'text-slate-500' : 'text-slate-400'} text-xs font-medium`}>
+                              {format(item.time, 'MMM d')}
+                            </span>
+                          </div>
+                          <Icon className="w-8 h-8 text-blue-500 my-2 group-hover:scale-110 group-hover:text-blue-600 transition-all duration-300" />
+                          <span className={`text-xl font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>
+                            {Math.round(item.temp)}°
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* 5-Day Daily Forecast Section */}
+              {weather.daily && (
+                <div className="mt-8">
+                  <h2 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'} mb-4`}>5-Day Forecast</h2>
+                  <div className={`${isDark ? 'bg-slate-800/30 border-white/5' : 'bg-white border-slate-200 shadow-sm'} border rounded-2xl overflow-hidden flex flex-col transition-all duration-300`}>
+                    {weather.daily.time.slice(0, 5).map((timeStr, idx) => {
+                      const dailyTime = parseISO(timeStr);
+                      const maxTemp = weather.daily!.temperatureMax[idx];
+                      const minTemp = weather.daily!.temperatureMin[idx];
+                      const wCode = weather.daily!.weatherCode[idx];
+                      const DailyIcon = getWeatherIcon(wCode, 1);
+                      
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`flex items-center justify-between p-4 ${idx !== 4 ? (isDark ? 'border-b border-white/5' : 'border-b border-slate-100') : ''} ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50/80'} transition-colors group cursor-pointer`}
+                        >
+                          <div className="w-24 shrink-0">
+                            <span className={`${isDark ? 'text-slate-200' : 'text-slate-800'} font-semibold text-lg`}>
+                              {idx === 0 ? 'Today' : format(dailyTime, 'EEEE')}
+                            </span>
+                          </div>
+                          
+                          <div className="flex-1 flex items-center justify-start ml-4 gap-3">
+                            <DailyIcon className="w-7 h-7 text-blue-500 group-hover:scale-110 transition-transform" />
+                            <span className={`${isDark ? 'text-slate-400' : 'text-slate-600'} text-sm hidden sm:block`}>
+                              {getWeatherDescription(wCode)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-end gap-4 min-w-[100px]">
+                            <span className={`${isDark ? 'text-slate-400' : 'text-slate-500'} font-medium`}>
+                              {Math.round(minTemp)}°
+                            </span>
+                            <div className={`w-16 h-1.5 ${isDark ? 'bg-slate-700/50' : 'bg-slate-200'} rounded-full overflow-hidden shrink-0 hidden sm:block`}>
+                               <div className="h-full bg-gradient-to-r from-blue-400 to-orange-400 rounded-full" style={{ width: '100%' }}></div>
+                            </div>
+                            <span className={`${isDark ? 'text-slate-100' : 'text-slate-900'} font-bold`}>
+                              {Math.round(maxTemp)}°
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            
+          </main>
         )}
-      >
-        <Heart className={cn("w-5 h-5 transition-transform active:scale-75", isFavorite && "fill-current")} />
-      </button>
+      </div>
     </div>
   );
 }
-
